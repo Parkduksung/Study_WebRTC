@@ -2,20 +2,35 @@ package com.example.studywebrtc.webrtc
 
 import android.app.Application
 import android.util.Log
-import org.webrtc.DefaultVideoDecoderFactory
-import org.webrtc.DefaultVideoEncoderFactory
-import org.webrtc.EglBase
-import org.webrtc.Loggable
-import org.webrtc.Logging
-import org.webrtc.PeerConnectionFactory
+import org.webrtc.*
+import org.webrtc.CameraVideoCapturer.CameraEventsHandler
 import org.webrtc.PeerConnectionFactory.InitializationOptions
 
-class WebRTCManager {
+class WebRTCManager(
+    application: Application,
+    private val peerConnectionObserver: PeerConnection.Observer
+) {
 
     private val eglBase: EglBase = EglBase.create()
 
+    private lateinit var peerConnectionFactory: PeerConnectionFactory
 
-    fun peerConnectionFactoryCreateAndInit(application: Application) {
+    private lateinit var localVideoSource: VideoSource
+
+    private lateinit var audioSource: AudioSource
+
+    private lateinit var videoCapture: CameraVideoCapturer
+
+    private val iceServer =
+        listOf(PeerConnection.IceServer.builder(ICE_SERVER_URL).createIceServer())
+
+    private var peerConnection: PeerConnection? = null
+
+    init {
+        init(application)
+    }
+
+    private fun init(application: Application) {
 
         //------------------------initializationOptions-----------------------
 
@@ -48,6 +63,7 @@ class WebRTCManager {
          */
         PeerConnectionFactory.initialize(initializationOptions.createInitializationOptions())
 
+
         //--------------------------PeerConnectionFactory.build--------------------
 
         //초기화 구성: 초기화 구성에서는 WebRTC 라이브러리에 대한 기본 구성을 정의합니다.
@@ -55,38 +71,62 @@ class WebRTCManager {
         //네트워크 구성: 네트워크 구성에서는 WebRTC의 네트워크 동작을 제어할 수 있습니다.
         //예를 들어, NAT 및 방화벽을 통과할 때 STUN 및 TURN 서버를 사용할지 여부를 정의할 수 있습니다.
         //코덱 및 인코더/디코더 구성: 코덱 및 인코더/디코더 구성에서는 WebRTC 미디어 코덱 및 인코더/디코더를 구성할 수 있습니다.
-        PeerConnectionFactory.builder().apply {
+        peerConnectionFactory =
+            PeerConnectionFactory.builder().apply {
 
-            setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
-            setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
+                setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
+                setVideoEncoderFactory(
+                    DefaultVideoEncoderFactory(
+                        eglBase.eglBaseContext,
+                        true,
+                        true
+                    )
+                )
 
-            //NetworkIgnoreMask - 네트워크 유형에 대한 우선 순위를 설정할 수 있는 옵션입니다.
-            //WebRTC 라이브러리가 특정 유형의 네트워크 연결을 무시하도록 지정할 수 있습니다.
-            //
-            //DisableEncryption - 이 옵션을 사용하면 WebRTC 라이브러리에서 암호화를 사용하지 않도록 설정할 수 있습니다.
-            //보안 요구 사항이 적은 테스트 환경에서 사용됩니다.
-            //
-            //DisableNetworkMonitor - 이 옵션을 사용하면 WebRTC 라이브러리에서 네트워크 감시를 비활성화할 수 있습니다.
-            //모바일 장치에서 전력 소모를 줄이기 위해 사용됩니다.
-            //
-            //EnableDtlsSrtp - 이 옵션을 사용하면 WebRTC 라이브러리에서 DTLS-SRTP (Datagram Transport Layer Security-Secure Real-Time Transport Protocol) 암호화를 사용할 수 있습니다.
-            //
-            //EnableIPv6 - 이 옵션을 사용하면 WebRTC 라이브러리에서 IPv6를 사용할 수 있습니다.
-            //
-            //SuspendBelowMinBitrate - 이 옵션을 사용하면 WebRTC 라이브러리에서 최소 비트 전송률 미만으로 전송되는 미디어 스트림을 일시 중지할 수 있습니다.
-            //네트워크 연결이 불안정한 경우 사용됩니다.
+                //NetworkIgnoreMask - 네트워크 유형에 대한 우선 순위를 설정할 수 있는 옵션입니다.
+                //WebRTC 라이브러리가 특정 유형의 네트워크 연결을 무시하도록 지정할 수 있습니다.
+                //
+                //DisableEncryption - 이 옵션을 사용하면 WebRTC 라이브러리에서 암호화를 사용하지 않도록 설정할 수 있습니다.
+                //보안 요구 사항이 적은 테스트 환경에서 사용됩니다.
+                //
+                //DisableNetworkMonitor - 이 옵션을 사용하면 WebRTC 라이브러리에서 네트워크 감시를 비활성화할 수 있습니다.
+                //모바일 장치에서 전력 소모를 줄이기 위해 사용됩니다.
+                //
+                //EnableDtlsSrtp - 이 옵션을 사용하면 WebRTC 라이브러리에서 DTLS-SRTP (Datagram Transport Layer Security-Secure Real-Time Transport Protocol) 암호화를 사용할 수 있습니다.
+                //
+                //EnableIPv6 - 이 옵션을 사용하면 WebRTC 라이브러리에서 IPv6를 사용할 수 있습니다.
+                //
+                //SuspendBelowMinBitrate - 이 옵션을 사용하면 WebRTC 라이브러리에서 최소 비트 전송률 미만으로 전송되는 미디어 스트림을 일시 중지할 수 있습니다.
+                //네트워크 연결이 불안정한 경우 사용됩니다.
 
-            setOptions(PeerConnectionFactory.Options().apply {
-                disableEncryption = true
-                disableNetworkMonitor = true
-            })
-        }.createPeerConnectionFactory()
+                setOptions(PeerConnectionFactory.Options().apply {
+                    disableEncryption = true
+                    disableNetworkMonitor = true
+                })
+            }.createPeerConnectionFactory()
+
+
+        localVideoSource = peerConnectionFactory.createVideoSource(true, true)
+
+        audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+
+        videoCapture = Camera2Enumerator(application).run {
+            deviceNames.find {
+                isFrontFacing(it)
+            }?.let {
+                createCapturer(it, CameraEventsHandlerImpl())
+            } ?: throw IllegalArgumentException()
+        }
+
+        peerConnection =
+            peerConnectionFactory.createPeerConnection(iceServer, peerConnectionObserver)
     }
 
     companion object {
 
         //group1 에 속한 사용자만에게 적용
         private const val FIELD_TRIALS = "WebRTC-H264HighProfile/Enabled/group1/"
+        private const val ICE_SERVER_URL = "stun:stun.l.google.com:19302"
     }
 }
 
@@ -106,5 +146,32 @@ class LoggingImpl : Loggable {
             INSTANCE ?: LoggingImpl().also {
                 INSTANCE = it
             }
+    }
+}
+
+
+class CameraEventsHandlerImpl : CameraEventsHandler {
+    override fun onCameraError(p0: String?) {
+        Log.d("결과", "onCameraError")
+    }
+
+    override fun onCameraDisconnected() {
+        Log.d("결과", "onCameraDisconnected")
+    }
+
+    override fun onCameraFreezed(p0: String?) {
+        Log.d("결과", "onCameraFreezed")
+    }
+
+    override fun onCameraOpening(p0: String?) {
+        Log.d("결과", "onCameraOpening")
+    }
+
+    override fun onFirstFrameAvailable() {
+        Log.d("결과", "onFirstFrameAvailable")
+    }
+
+    override fun onCameraClosed() {
+        Log.d("결과", "onCameraClosed")
     }
 }
